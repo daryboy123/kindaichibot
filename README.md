@@ -1,0 +1,2 @@
+# kindaichibot
+bot
