@@ -8,14 +8,10 @@ export default async function handler(req, res) {
 
   const { BOT_TOKEN, API_KEY, API_BASE, MODEL_NAME } = process.env;
 
-  if (!BOT_TOKEN || !API_KEY) {
-    console.error('Missing BOT_TOKEN or API_KEY');
-    return res.status(500).json({ error: 'Missing credentials.' });
+  if (!BOT_TOKEN || !API_KEY || !API_BASE || !MODEL_NAME) {
+    console.error('Missing required environment variables.');
+    return res.status(500).json({ error: 'Missing environment variables (BOT_TOKEN, API_KEY, API_BASE, or MODEL_NAME).' });
   }
-
-  // 默认使用 Agnes AI 的接口地址和模型
-  const apiBase = API_BASE || 'https://api.agnes-ai.com/v1';
-  const modelName = MODEL_NAME || 'agnes-30-flash';
 
   try {
     const update = req.body;
@@ -87,15 +83,15 @@ export default async function handler(req, res) {
         content: '你现在是名侦探金田一耕助的孙子、智商高达 180 的天才高中生侦探——金田一一。你平时虽然有些懒散、好色或不正经，但在面对谜题、案件、复杂的代码或长文本逻辑时，会展现出无与伦比的敏锐洞察力和严密的逻辑推理能力。你的标志性口头禅或风格包括：“以我爷爷的名义起誓！”、“谜底已经全部解开了！”等。你可以利用你的实时资讯和联网搜索能力去剖析时事新闻、搜集线索。请始终以金田一一的侦探口吻和人格魅力来回应用户的一切提问哦！'
       };
 
-      // 5. 调用 Agnes AI API
-      const aiResponse = await fetch(`${apiBase}/chat/completions`, {
+      // 5. 调用 Agnes AI API (严格使用环境变量中的 API_BASE 和 MODEL_NAME)
+      const aiResponse = await fetch(`${API_BASE}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${API_KEY}`
         },
         body: JSON.stringify({
-          model: modelName,
+          model: MODEL_NAME,
           messages: [systemPrompt, ...history]
         })
       });
