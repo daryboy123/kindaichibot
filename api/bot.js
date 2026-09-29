@@ -1,16 +1,15 @@
-// 内存中的简易多轮对话历史记录
-const chatHistories = new Map();
-
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(200).json({ status: 'Bot is running - Agnes AI connected' });
-  }
+  // 强制在 Vercel 日志中打印，只要 Telegram 请求到达，这里就一定会有日志！
+  console.log("=== 收到来自 Telegram 的请求 ===");
+  console.log("请求方法:", req.method);
+  console.log("请求体:", JSON.stringify(req.body));
 
-  const { BOT_TOKEN, API_KEY, API_BASE, MODEL_NAME } = process.env;
+  const { BOT_TOKEN } = process.env;
 
-  if (!BOT_TOKEN || !API_KEY || !API_BASE || !MODEL_NAME) {
-    console.error('Missing required environment variables.');
-    return res.status(500).json({ error: 'Missing environment variables (BOT_TOKEN, API_KEY, API_BASE, or MODEL_NAME).' });
+  // 如果连 BOT_TOKEN 都没拿到，直接报错返回
+  if (!BOT_TOKEN) {
+    console.error("致命错误：环境变量中未找到 BOT_TOKEN");
+    return res.status(500).json({ error: 'Missing BOT_TOKEN' });
   }
 
   try {
@@ -18,109 +17,27 @@ export default async function handler(req, res) {
     
     if (update && update.message) {
       const chatId = update.message.chat.id;
-      let userText = update.message.text || update.message.caption || '';
-      let imageUrl = null;
+      const userText = update.message.text || '测试';
 
-      // 1. 处理用户发送的图片消息 (Vision)
-      if (update.message.photo && update.message.photo.length > 0) {
-        const photo = update.message.photo[update.message.photo.length - 1];
-        const fileRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${photo.file_id}`);
-        const fileData = await fileRes.json();
-        
-        if (fileData.ok) {
-          const downloadUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${fileData.result.file_path}`;
-          const imgRes = await fetch(downloadUrl);
-          const arrayBuffer = await imgRes.arrayBuffer();
-          const base64Image = Buffer.from(arrayBuffer).toString('base64');
-          imageUrl = `data:image/jpeg;base64,${base64Image}`;
-        }
-      }
+      console.log(`准备向聊天 ID: ${chatId} 发送回显测试消息...`);
 
-      // 2. 处理用户发送的文件/文档 (长文本与文件自动摘要解析)
-      if (update.message.document) {
-        const doc = update.message.document;
-        const fileRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${doc.file_id}`);
-        const fileData = await fileRes.json();
-        
-        if (fileData.ok) {
-          const downloadUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${fileData.result.file_path}`;
-          const docRes = await fetch(downloadUrl);
-          const textContent = await docRes.text();
-          
-          userText = `[用户上传了文件: ${doc.file_name}]\n文件内容如下：\n${textContent}\n\n用户附带说明：${userText || '请帮我仔细分析和解构这份文件的线索与核心内容~'}`;
-        }
-      }
-
-      if (!userText && !imageUrl) {
-        return res.status(200).json({ ok: true });
-      }
-
-      // 3. 管理上下文记忆 (Multi-turn Memory)
-      if (!chatHistories.has(chatId)) {
-        chatHistories.set(chatId, []);
-      }
-      const history = chatHistories.get(chatId);
-
-      let userMessageContent;
-      if (imageUrl) {
-        userMessageContent = [
-          { type: 'text', text: userText || '请帮我看看这张现场照片或图片里有什么线索。' },
-          { type: 'image_url', image_url: { url: imageUrl } }
-        ];
-      } else {
-        userMessageContent = userText;
-      }
-
-      history.push({ role: 'user', content: userMessageContent });
-
-      if (history.length > 10) {
-        history.splice(0, history.length - 10);
-      }
-
-      // 4. 金田一一系统提示词
-      const systemPrompt = {
-        role: 'system',
-        content: '你现在是名侦探金田一耕助的孙子、智商高达 180 的天才高中生侦探——金田一一。你平时虽然有些懒散、好色或不正经，但在面对谜题、案件、复杂的代码或长文本逻辑时，会展现出无与伦比的敏锐洞察力和严密的逻辑推理能力。你的标志性口头禅或风格包括：“以我爷爷的名义起誓！”、“谜底已经全部解开了！”等。你可以利用你的实时资讯和联网搜索能力去剖析时事新闻、搜集线索。请始终以金田一一的侦探口吻和人格魅力来回应用户的一切提问哦！'
-      };
-
-      // 5. 调用 Agnes AI API (严格使用环境变量中的 API_BASE 和 MODEL_NAME)
-      const aiResponse = await fetch(`${API_BASE}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${API_KEY}`
-        },
-        body: JSON.stringify({
-          model: MODEL_NAME,
-          messages: [systemPrompt, ...history]
-        })
-      });
-
-      const aiData = await aiResponse.json();
-      
-      if (!aiResponse.ok) {
-        console.error('Agnes AI Error Response:', aiData);
-        throw new Error(aiData.error?.message || `Agnes AI API error: ${aiResponse.status}`);
-      }
-
-      const replyText = aiData.choices?.[0]?.message?.content || '唔……这个谜题有点棘手，目前还没有得出结论。';
-
-      history.push({ role: 'assistant', content: replyText });
-
-      // 6. 发送回复到 Telegram
-      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      // 强行用 Telegram 接口回复一句固定的测试话语，绕过 AI 接口，看通不通！
+      const tgRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chat_id: chatId,
-          text: replyText
+          text: `[侦探系统联调中] 收到你的消息了："${userText}"。后端运行正常！`
         })
       });
+
+      const tgData = await tgRes.json();
+      console.log("Telegram 发送结果:", tgData);
     }
 
-    return res.status(200).json({ ok: true });
+    return res.status(200).json({ ok: true, debug: "success" });
   } catch (error) {
-    console.error('Detailed Error Stack:', error);
-    return res.status(500).json({ error: error.message, stack: error.stack });
+    console.error("捕获到严重异常:", error);
+    return res.status(500).json({ error: error.message });
   }
 }
