@@ -10,7 +10,7 @@ export default async function handler(req, res) {
 
   const IMAGE_API_BASE = 'https://apinebula.ai/v1';
   const IMAGE_API_KEY = 'sk-BD8o5VixXRfywx1prgeXjTh8xUJlsmW9kwqbbJtlBdpL8vZq';
-  const IMAGE_MODEL_NAME = 'gpt-image-2'; // 明确指定生图模型
+  const IMAGE_MODEL_NAME = 'gpt-image-2';
 
   if (!BOT_TOKEN || !API_KEY || !API_BASE || !MODEL_NAME) {
     console.error('Missing required chat environment variables.');
@@ -25,10 +25,17 @@ export default async function handler(req, res) {
       let userText = update.message.text || update.message.caption || '';
       let imageUrl = null;
 
-      // 1. 处理用户发送的图片消息 (Vision 看图对话)
+      // 1. 处理用户发送或回复的图片
+      let targetPhoto = null;
       if (update.message.photo && update.message.photo.length > 0) {
-        const photo = update.message.photo[update.message.photo.length - 1];
-        const fileRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${photo.file_id}`);
+        targetPhoto = update.message.photo[update.message.photo.length - 1];
+      } else if (update.message.reply_to_message && update.message.reply_to_message.photo) {
+        const photos = update.message.reply_to_message.photo;
+        targetPhoto = photos[photos.length - 1];
+      }
+
+      if (targetPhoto) {
+        const fileRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${targetPhoto.file_id}`);
         const fileData = await fileRes.json();
         
         if (fileData.ok) {
@@ -40,26 +47,16 @@ export default async function handler(req, res) {
         }
       }
 
-      if (!userText && !imageUrl) {
-        return res.status(200).json({ ok: true });
-      }
-
       // ==========================================
-      // 2. 处理生图指令：/draw <提示词>（改用兼容性极佳的 /chat/completions 通道）
+      // 2. 处理图生图功能：当用户带图发送，或者回复图并输入指令时
       // ==========================================
-      if (userText.startsWith('/draw ')) {
-        const prompt = userText.replace('/draw ', '').trim();
+      if (imageUrl && (userText.startsWith('/img2img') || userText.startsWith('/draw') || userText.length > 0)) {
+        const prompt = userText.replace('/img2img', '').replace('/draw', '').trim() || 'Based on this image, generate a new artistic variation.';
         
-        if (!prompt) {
-          await sendTelegramMessage(BOT_TOKEN, chatId, '⚠️ 请在 /draw 后面输入你想画的画面描述哦。');
-          return res.status(200).json({ ok: true });
-        }
-
-        // 发送“正在创作”的提示
-        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在为您构思并绘制：“${prompt}”，请稍候...`);
+        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在参考这张图片为您进行图生图创作：“${prompt}”，请稍候...`);
 
         try {
-          // 通过标准的 chat/completions 接口让 gpt-image-2 生成图片
+          // 通过 chat/completions 传入图文，要求模型根据参考图生成新图
           const imageApiRes = await fetch(`${IMAGE_API_BASE}/chat/completions`, {
             method: 'POST',
             headers: {
@@ -69,19 +66,23 @@ export default async function handler(req, res) {
             body: JSON.stringify({
               model: IMAGE_MODEL_NAME,
               messages: [
-                { role: 'user', content: `Generate an image based on this prompt: ${prompt}` }
+                {
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: `Generate a new image based on this reference image and prompt: ${prompt}` },
+                    { type: 'image_url', image_url: { url: imageUrl } }
+                  ]
+                }
               ]
             })
           });
 
           const imageApiData = await imageApiRes.json();
-          console.log('Chat-Image API Response:', JSON.stringify(imageApiData));
-
+          
           if (!imageApiRes.ok) {
             throw new Error(imageApiData.error?.message || `API error: ${imageApiRes.status}`);
           }
 
-          // 从大模型的文本回复中提取图片链接（支持 Markdown 格式 ![desc](url) 或纯链接）
           const replyContent = imageApiData.choices?.[0]?.message?.content || '';
           
           let finalImageUrl = null;
@@ -97,10 +98,79 @@ export default async function handler(req, res) {
           }
 
           if (!finalImageUrl) {
-            throw new Error(`模型未直接返回图片链接，文字回复内容为: ${replyContent.slice(0, 100)}`);
+            throw new Error(`模型未返回图片链接，回复内容为: ${replyContent.slice(0, 100)}`);
           }
 
-          // 发送图片给 Telegram 用户
+          await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              photo: finalImageUrl,
+              caption: `✨ 图生图提示词: ${prompt}`
+            })
+          });
+
+        } catch (imgError) {
+          console.error('Image-to-Image Error:', imgError);
+          await sendTelegramMessage(BOT_TOKEN, chatId, `❌ 唔……图生图时遇到了阻碍：${imgError.message}`);
+        }
+
+        return res.status(200).json({ ok: true });
+      }
+
+      // ==========================================
+      // 3. 处理纯文生图指令：/draw <提示词>
+      // ==========================================
+      if (userText.startsWith('/draw ')) {
+        const prompt = userText.replace('/draw ', '').trim();
+        
+        if (!prompt) {
+          await sendTelegramMessage(BOT_TOKEN, chatId, '⚠️ 请在 /draw 后面输入你想画的画面描述哦。');
+          return res.status(200).json({ ok: true });
+        }
+
+        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在为您构思并绘制：“${prompt}”，请稍候...`);
+
+        try {
+          const imageApiRes = await fetch(`${IMAGE_API_BASE}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${IMAGE_API_KEY}`
+            },
+            body: JSON.stringify({
+              model: IMAGE_MODEL_NAME,
+              messages: [
+                { role: 'user', content: `Generate an image: ${prompt}` }
+              ]
+            })
+          });
+
+          const imageApiData = await imageApiRes.json();
+
+          if (!imageApiRes.ok) {
+            throw new Error(imageApiData.error?.message || `API error: ${imageApiRes.status}`);
+          }
+
+          const replyContent = imageApiData.choices?.[0]?.message?.content || '';
+          
+          let finalImageUrl = null;
+          const markdownImgMatch = replyContent.match(/\((https?:\/\/[^\s)]+)\)/);
+          const rawUrlMatch = replyContent.match(/(https?:\/\/[^\s]+\.(png|jpg|jpeg|webp))/i);
+
+          if (markdownImgMatch) {
+            finalImageUrl = markdownImgMatch[1];
+          } else if (rawUrlMatch) {
+            finalImageUrl = rawUrlMatch[0];
+          } else if (replyContent.startsWith('http')) {
+            finalImageUrl = replyContent.trim();
+          }
+
+          if (!finalImageUrl) {
+            throw new Error(`模型未直接返回图片链接，文字回复为: ${replyContent.slice(0, 100)}`);
+          }
+
           await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -118,9 +188,10 @@ export default async function handler(req, res) {
 
         return res.status(200).json({ ok: true });
       }
-      // ==========================================
 
-      // 3. 原有：多轮对话上下文记忆管理
+      // ==========================================
+      // 4. 常规多轮文字聊天 / 看图说话
+      // ==========================================
       if (!chatHistories.has(chatId)) {
         chatHistories.set(chatId, []);
       }
