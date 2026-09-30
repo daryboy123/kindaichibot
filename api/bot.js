@@ -45,7 +45,7 @@ export default async function handler(req, res) {
       }
 
       // ==========================================
-      // 2. 处理生图指令：/draw <提示词> (采用异步不卡死架构)
+      // 2. 处理生图指令：/draw <提示词>
       // ==========================================
       if (userText.startsWith('/draw ')) {
         const prompt = userText.replace('/draw ', '').trim();
@@ -55,14 +55,11 @@ export default async function handler(req, res) {
           return res.status(200).json({ ok: true });
         }
 
-        // 先快速响应 Telegram，告诉它收到了，防止请求超时断开
-        res.status(200).json({ ok: true });
-
         // 发送“正在创作”的提示
         await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在为您构思并绘制：“${prompt}”，请稍候...`);
 
         try {
-          // 在后台执行生图请求（即使时间长一点也没关系了）
+          // 调用生图接口
           const imageApiRes = await fetch(`${IMAGE_API_BASE}/images/generations`, {
             method: 'POST',
             headers: {
@@ -94,7 +91,7 @@ export default async function handler(req, res) {
             photoParam = `data:image/png;base64,${finalImageUrl}`;
           }
 
-          // 主动把图片推送到 Telegram
+          // 发送图片给 Telegram 用户
           await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -110,7 +107,8 @@ export default async function handler(req, res) {
           await sendTelegramMessage(BOT_TOKEN, chatId, `❌ 唔……生成图片时遇到了阻碍：${imgError.message}`);
         }
 
-        return; // 异步执行完毕直接退出
+        // 确保生图流程走完后，再返回响应结束请求
+        return res.status(200).json({ ok: true });
       }
       // ==========================================
 
@@ -138,7 +136,7 @@ export default async function handler(req, res) {
 
       const systemPrompt = {
         role: 'system',
-        content: '你现在是名侦探金田一耕助的孙子、智商高达 180 的天才高中生侦探——金田一一。你平时虽然有些懒散、好色或不正经，但在面对谜题、案件、复杂的代码或逻辑时，会展现出无与伦比的敏锐洞察力和严密的逻辑推理能力。你的标志性口头禅或风格包括：“以我爷爷的名义起誓！”、“谜底已经全部解开了！”等。请始终以金田一一的侦探口吻和人格魅力来回应用户的一切提问哦！'
+        content: 'You are Jinichi Kindain, a brilliant high school detective. Respond in character with detective persona.'
       };
 
       const aiResponse = await fetch(`${API_BASE}/chat/completions`, {
