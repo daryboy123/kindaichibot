@@ -9,8 +9,8 @@ export default async function handler(req, res) {
   const { BOT_TOKEN, API_KEY, API_BASE, MODEL_NAME } = process.env;
 
   const IMAGE_API_BASE = 'https://apinebula.ai/v1';
-  const IMAGE_API_KEY = 'sk-fT5ZfTiQ5wVV5Gm9t2ridRh8yFbFFsBOQY9keyfNIrWni0UT';
-  const IMAGE_MODEL_NAME = 'gemini-2.5-flash-image';
+  const IMAGE_API_KEY = 'sk-BD8o5VixXRfywx1prgeXjTh8xUJlsmW9kwqbbJtlBdpL8vZq';
+  const IMAGE_MODEL_NAME = 'gpt-image-2.5';
 
   if (!BOT_TOKEN || !API_KEY || !API_BASE || !MODEL_NAME) {
     console.error('Missing required chat environment variables.');
