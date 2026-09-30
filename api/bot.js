@@ -9,8 +9,8 @@ export default async function handler(req, res) {
   const { BOT_TOKEN, API_KEY, API_BASE, MODEL_NAME } = process.env;
 
   const IMAGE_API_BASE = 'https://apinebula.ai/v1';
-  const IMAGE_API_KEY = 'sk-BD8o5VixXRfywx1prgeXjTh8xUJlsmW9kwqbbJtlBdpL8vZq';
-  const IMAGE_MODEL_NAME = 'gpt-image-2';
+  const IMAGE_API_KEY = 'sk-fT5ZfTiQ5wVV5Gm9t2ridRh8yFbFFsBOQY9keyfNIrWni0UT';
+  const IMAGE_MODEL_NAME = 'gemini-2.5-flash-image';
 
   if (!BOT_TOKEN || !API_KEY || !API_BASE || !MODEL_NAME) {
     console.error('Missing required chat environment variables.');
@@ -53,10 +53,9 @@ export default async function handler(req, res) {
       if (imageUrl && (userText.startsWith('/img2img') || userText.startsWith('/draw') || userText.length > 0)) {
         const prompt = userText.replace('/img2img', '').replace('/draw', '').trim() || 'Based on this image, generate a new artistic variation.';
         
-        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在参考这张图片为您进行图生图创作：“${prompt}”，请稍候...`);
+        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在参考这张图片为您进行图生图创作：“${prompt}”, 请稍候...`);
 
         try {
-          // 通过 chat/completions 传入图文，要求模型根据参考图生成新图
           const imageApiRes = await fetch(`${IMAGE_API_BASE}/chat/completions`, {
             method: 'POST',
             headers: {
@@ -85,16 +84,20 @@ export default async function handler(req, res) {
 
           const replyContent = imageApiData.choices?.[0]?.message?.content || '';
           
+          // 增强版图片链接提取逻辑（兼容 PNG, JPG, JPEG, WEBP, GIF 等）
           let finalImageUrl = null;
           const markdownImgMatch = replyContent.match(/\((https?:\/\/[^\s)]+)\)/);
-          const rawUrlMatch = replyContent.match(/(https?:\/\/[^\s]+\.(png|jpg|jpeg|webp))/i);
+          const rawUrlMatch = replyContent.match(/(https?:\/\/[^\s]+\.(png|jpg|jpeg|webp|gif|bmp|tiff))/i);
+          const genericHttpMatch = replyContent.match(/(https?:\/\/[^\s<>"]+)/i);
 
           if (markdownImgMatch) {
             finalImageUrl = markdownImgMatch[1];
           } else if (rawUrlMatch) {
             finalImageUrl = rawUrlMatch[0];
+          } else if (genericHttpMatch && (genericHttpMatch[0].includes('image') || genericHttpMatch[0].includes('img') || genericHttpMatch[0].includes('cos') || genericHttpMatch[0].includes('oss'))) {
+            finalImageUrl = genericHttpMatch[0];
           } else if (replyContent.startsWith('http')) {
-            finalImageUrl = replyContent.trim();
+            finalImageUrl = replyContent.trim().split(/\s+/)[0];
           }
 
           if (!finalImageUrl) {
@@ -130,7 +133,7 @@ export default async function handler(req, res) {
           return res.status(200).json({ ok: true });
         }
 
-        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在为您构思并绘制：“${prompt}”，请稍候...`);
+        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在为您构思并绘制：“${prompt}”, 请稍候...`);
 
         try {
           const imageApiRes = await fetch(`${IMAGE_API_BASE}/chat/completions`, {
@@ -157,14 +160,17 @@ export default async function handler(req, res) {
           
           let finalImageUrl = null;
           const markdownImgMatch = replyContent.match(/\((https?:\/\/[^\s)]+)\)/);
-          const rawUrlMatch = replyContent.match(/(https?:\/\/[^\s]+\.(png|jpg|jpeg|webp))/i);
+          const rawUrlMatch = replyContent.match(/(https?:\/\/[^\s]+\.(png|jpg|jpeg|webp|gif|bmp|tiff))/i);
+          const genericHttpMatch = replyContent.match(/(https?:\/\/[^\s<>"]+)/i);
 
           if (markdownImgMatch) {
             finalImageUrl = markdownImgMatch[1];
           } else if (rawUrlMatch) {
             finalImageUrl = rawUrlMatch[0];
+          } else if (genericHttpMatch && (genericHttpMatch[0].includes('image') || genericHttpMatch[0].includes('img') || genericHttpMatch[0].includes('cos') || genericHttpMatch[0].includes('oss'))) {
+            finalImageUrl = genericHttpMatch[0];
           } else if (replyContent.startsWith('http')) {
-            finalImageUrl = replyContent.trim();
+            finalImageUrl = replyContent.trim().split(/\s+/)[0];
           }
 
           if (!finalImageUrl) {
