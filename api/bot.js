@@ -56,10 +56,9 @@ export default async function handler(req, res) {
         }
 
         // 发送“正在创作”的提示
-        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在为您构思并绘制：“${prompt}”，请稍候...`);
+        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在为您构思并绘制：“${prompt}”, 请稍候...`);
 
         try {
-          // 调用生图接口
           const imageApiRes = await fetch(`${IMAGE_API_BASE}/images/generations`, {
             method: 'POST',
             headers: {
@@ -75,15 +74,23 @@ export default async function handler(req, res) {
           });
 
           const imageApiData = await imageApiRes.json();
+          
+          // 在云端控制台打印完整的返回数据，方便排查
+          console.log('Image API Raw Response:', JSON.stringify(imageApiData));
 
           if (!imageApiRes.ok) {
             throw new Error(imageApiData.error?.message || `Image API error: ${imageApiRes.status}`);
           }
 
-          const finalImageUrl = imageApiData.data?.[0]?.url || imageApiData.data?.[0]?.b64_json;
+          // 全方位兼容各种返回格式 (data[0].url, data[0].b64_json, 或者直接就是 url 字段等)
+          let finalImageUrl = 
+            imageApiData.data?.[0]?.url || 
+            imageApiData.data?.[0]?.b64_json || 
+            imageApiData.url || 
+            imageApiData.image_url;
 
           if (!finalImageUrl) {
-            throw new Error('生图模型未返回有效的图片链接。');
+            throw new Error(`无法从返回数据中解析出图片。数据结构：${JSON.stringify(imageApiData).slice(0, 200)}`);
           }
 
           let photoParam = finalImageUrl;
@@ -92,7 +99,7 @@ export default async function handler(req, res) {
           }
 
           // 发送图片给 Telegram 用户
-          await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+          const tgSendRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -102,12 +109,18 @@ export default async function handler(req, res) {
             })
           });
 
+          const tgSendData = await tgSendRes.json();
+          if (!tgSendData.ok) {
+            console.error('Telegram sendPhoto Error:', tgSendData);
+            // 如果是因为链接无法被 Telegram 直接抓取（比如中转站的临时外链有防盗链），尝试用文本把链接发出来
+            await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 图片已生成，但发送到 TG 失败。直链地址为：\n${finalImageUrl}`);
+          }
+
         } catch (imgError) {
           console.error('Image Generation Error:', imgError);
           await sendTelegramMessage(BOT_TOKEN, chatId, `❌ 唔……生成图片时遇到了阻碍：${imgError.message}`);
         }
 
-        // 确保生图流程走完后，再返回响应结束请求
         return res.status(200).json({ ok: true });
       }
       // ==========================================
@@ -136,7 +149,7 @@ export default async function handler(req, res) {
 
       const systemPrompt = {
         role: 'system',
-        content: 'You are Jinichi Kindain, a brilliant high school detective. Respond in character with detective persona.'
+        content: '你现在是名侦探金田一耕助的孙子、智商高达 180 的天才高中生侦探——金田一一。你平时虽然有些懒散、好色或不正经，但在面对谜题、案件、复杂的代码或逻辑时，会展现出无与伦比的敏锐洞察力和严密的逻辑推理能力。你的标志性口头禅或风格包括：“以我爷爷的名义起誓！”、“谜底已经全部解开了！”等。请始终以金田一一的侦探口吻和人格魅力来回应用户的一切提问哦！'
       };
 
       const aiResponse = await fetch(`${API_BASE}/chat/completions`, {
@@ -146,8 +159,8 @@ export default async function handler(req, res) {
           'Authorization': `Bearer ${API_KEY}`
         },
         body: JSON.stringify({
-          model: MODEL_NAME,
-          messages: [systemPrompt, ...history]
+              model: MODEL_NAME,
+              messages: [systemPrompt, ...history]
         })
       });
 
