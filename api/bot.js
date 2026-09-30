@@ -8,6 +8,7 @@ export default async function handler(req, res) {
 
   const { BOT_TOKEN, API_KEY, API_BASE, MODEL_NAME } = process.env;
 
+  // 严格遵循官方文档：图像/多模态模型统一走标准的 /v1 聊天补全端点
   const IMAGE_API_BASE = 'https://apihub.agnes-ai.com/v1';
   const IMAGE_API_KEY = 'sk-ozDsndDe9QaPCRibCGCpsx671obGruY9KBCThyWk8KvRPYBs';
   const IMAGE_MODEL_NAME = 'agnes-image-2.5-flash';
@@ -48,15 +49,15 @@ export default async function handler(req, res) {
       }
 
       // ==========================================
-      // 2. 处理图生图功能 (严格遵循 /v1/images/generations)
+      // 2. 处理图生图 / 视觉多轮创作功能 (通过 chat/completions)
       // ==========================================
       if (imageUrl && (userText.startsWith('/img2img') || userText.startsWith('/draw') || userText.length > 0)) {
         const prompt = userText.replace('/img2img', '').replace('/draw', '').trim() || 'Based on this image, generate a new artistic variation.';
         
-        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在参考这张图片为您进行图生图创作：“${prompt}”, 请稍候...`);
+        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在参考这张图片为您进行创作：“${prompt}”, 请稍候...`);
 
         try {
-          const imageApiRes = await fetch(`${IMAGE_API_BASE}/images/generations`, {
+          const imageApiRes = await fetch(`${IMAGE_API_BASE}/chat/completions`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -64,10 +65,15 @@ export default async function handler(req, res) {
             },
             body: JSON.stringify({
               model: IMAGE_MODEL_NAME,
-              prompt: prompt,
-              image: imageUrl,
-              n: 1,
-              response_format: 'url'
+              messages: [
+                {
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: `Generate an image based on this reference and prompt: ${prompt}` },
+                    { type: 'image_url', image_url: { url: imageUrl } }
+                  ]
+                }
+              ]
             })
           });
 
@@ -77,13 +83,36 @@ export default async function handler(req, res) {
             throw new Error(imageApiData.error?.message || `API error: ${imageApiRes.status}`);
           }
 
-          const finalImageUrl = imageApiData.data?.[0]?.url || imageApiData.data?.[0]?.b64_json;
+          const replyContent = imageApiData.choices?.[0]?.message?.content || '';
+          
+          let finalImageUrl = null;
+          let isBase64 = false;
 
-          if (!finalImageUrl) {
-            throw new Error(`模型未返回有效图片链接`);
+          const base64Match = replyContent.match(/(data:image\/[a-zA-Z0-9+.-]+;base64,[^\s)]+)/i);
+          const markdownImgMatch = replyContent.match(/\((https?:\/\/[^\s)]+)\)/);
+          const rawUrlMatch = replyContent.match(/(https?:\/\/[^\s]+\.(png|jpg|jpeg|webp|gif|bmp|tiff))/i);
+          const genericHttpMatch = replyContent.match(/(https?:\/\/[^\s<>"]+)/i);
+
+          if (base64Match) {
+            finalImageUrl = base64Match[1];
+            isBase64 = true;
+          } else if (markdownImgMatch) {
+            finalImageUrl = markdownImgMatch[1];
+          } else if (rawUrlMatch) {
+            finalImageUrl = rawUrlMatch[0];
+          } else if (genericHttpMatch && (genericHttpMatch[0].includes('image') || genericHttpMatch[0].includes('img') || genericHttpMatch[0].includes('cos') || genericHttpMatch[0].includes('oss'))) {
+            finalImageUrl = genericHttpMatch[0];
+          } else if (replyContent.startsWith('http')) {
+            finalImageUrl = replyContent.trim().split(/\s+/)[0];
           }
 
-          if (finalImageUrl.startsWith('data:image')) {
+          if (!finalImageUrl) {
+            // 如果模型返回的是文字而不是直接的图片链接，就把模型的文字说明发出来
+            await sendTelegramMessage(BOT_TOKEN, chatId, `✨ 创作结果：\n${replyContent}`);
+            return res.status(200).json({ ok: true });
+          }
+
+          if (isBase64) {
             const matches = finalImageUrl.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
             if (!matches) {
               throw new Error('解析 Base64 图片数据失败');
@@ -91,7 +120,7 @@ export default async function handler(req, res) {
             const ext = matches[1];
             const buffer = Buffer.from(matches[2], 'base64');
 
-            await sendTelegramPhotoBuffer(BOT_TOKEN, chatId, buffer, `✨ 图生图提示词: ${prompt}`, `image.${ext === 'jpeg' ? 'jpg' : ext}`);
+            await sendTelegramPhotoBuffer(BOT_TOKEN, chatId, buffer, `✨ 提示词: ${prompt}`, `image.${ext === 'jpeg' ? 'jpg' : ext}`);
           } else {
             await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
               method: 'POST',
@@ -99,7 +128,7 @@ export default async function handler(req, res) {
               body: JSON.stringify({
                 chat_id: chatId,
                 photo: finalImageUrl,
-                caption: `✨ 图生图提示词: ${prompt}`
+                caption: `✨ 提示词: ${prompt}`
               })
             });
           }
@@ -113,20 +142,20 @@ export default async function handler(req, res) {
       }
 
       // ==========================================
-      // 3. 处理纯文生图指令：/draw <提示词> (严格遵循 /v1/images/generations)
+      // 3. 处理纯文生图指令：/draw <提示词> (通过 chat/completions)
       // ==========================================
       if (userText.startsWith('/draw ')) {
         const prompt = userText.replace('/draw ', '').trim();
         
         if (!prompt) {
-          await sendTelegramMessage(BOT_TOKEN, chatId, '⚠️ 请在 /draw 后面输入你想画的画面描述哦。');
+          await sendTelegramMessage(BOT_TOKEN, chatId, '⚠️️ 请在 /draw 后面输入你想画的画面描述哦。');
           return res.status(200).json({ ok: true });
         }
 
         await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在为您构思并绘制：“${prompt}”, 请稍候...`);
 
         try {
-          const imageApiRes = await fetch(`${IMAGE_API_BASE}/images/generations`, {
+          const imageApiRes = await fetch(`${IMAGE_API_BASE}/chat/completions`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -134,9 +163,9 @@ export default async function handler(req, res) {
             },
             body: JSON.stringify({
               model: IMAGE_MODEL_NAME,
-              prompt: prompt,
-              n: 1,
-              response_format: 'url'
+              messages: [
+                { role: 'user', content: `Generate an image of: ${prompt}` }
+              ]
             })
           });
 
@@ -146,13 +175,35 @@ export default async function handler(req, res) {
             throw new Error(imageApiData.error?.message || `API error: ${imageApiRes.status}`);
           }
 
-          const finalImageUrl = imageApiData.data?.[0]?.url || imageApiData.data?.[0]?.b64_json;
+          const replyContent = imageApiData.choices?.[0]?.message?.content || '';
+          
+          let finalImageUrl = null;
+          let isBase64 = false;
 
-          if (!finalImageUrl) {
-            throw new Error(`模型未返回有效图片`);
+          const base64Match = replyContent.match(/(data:image\/[a-zA-Z0-9+.-]+;base64,[^\s)]+)/i);
+          const markdownImgMatch = replyContent.match(/\((https?:\/\/[^\s)]+)\)/);
+          const rawUrlMatch = replyContent.match(/(https?:\/\/[^\s]+\.(png|jpg|jpeg|webp|gif|bmp|tiff))/i);
+          const genericHttpMatch = replyContent.match(/(https?:\/\/[^\s<>"]+)/i);
+
+          if (base64Match) {
+            finalImageUrl = base64Match[1];
+            isBase64 = true;
+          } else if (markdownImgMatch) {
+            finalImageUrl = markdownImgMatch[1];
+          } else if (rawUrlMatch) {
+            finalImageUrl = rawUrlMatch[0];
+          } else if (genericHttpMatch && (genericHttpMatch[0].includes('image') || genericHttpMatch[0].includes('img') || genericHttpMatch[0].includes('cos') || genericHttpMatch[0].includes('oss'))) {
+            finalImageUrl = genericHttpMatch[0];
+          } else if (replyContent.startsWith('http')) {
+            finalImageUrl = replyContent.trim().split(/\s+/)[0];
           }
 
-          if (finalImageUrl.startsWith('data:image')) {
+          if (!finalImageUrl) {
+            await sendTelegramMessage(BOT_TOKEN, chatId, `✨ 绘制结果：\n${replyContent}`);
+            return res.status(200).json({ ok: true });
+          }
+
+          if (isBase64) {
             const matches = finalImageUrl.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
             if (!matches) {
               throw new Error('解析 Base64 图片数据失败');
@@ -263,8 +314,8 @@ async function sendTelegramPhotoBuffer(botToken, chatId, buffer, caption, filena
     bodyParts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n${caption}\r\n`));
   }
   bodyParts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="photo"; filename="${filename}"\r\nContent-Type: image/png\r\n\r\n`));
-  bodyParts.buffer(buffer); // 注意：若此处报错可改回 buffer
-  bodyParts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+  bodyParts.push(buffer);
+  bodyParts.push(Buffer.from(`--${boundary}--\r\n`));
 
   const payload = Buffer.concat(bodyParts);
 
