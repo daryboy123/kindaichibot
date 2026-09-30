@@ -1,15 +1,17 @@
+// 内存中的简易多轮对话历史记录
+const chatHistories = new Map();
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(200).json({ status: 'Bot is running - Agnes AI connected' });
   }
 
-  // 聊天模型的环境变量保持不变
   const { BOT_TOKEN, API_KEY, API_BASE, MODEL_NAME } = process.env;
 
-  // 【临时测试】直接把生图配置写死在代码里，排除环境变量没生效的问题
+  // 生图配置（依然保持写死，确保不会受环境变量影响）
   const IMAGE_API_BASE = 'https://apinebula.ai/v1';
   const IMAGE_API_KEY = 'sk-BD8o5VixXRfywx1prgeXjTh8xUJlsmW9kwqbbJtlBdpL8vZq';
-  const IMAGE_MODEL_NAME = 'gpt-image-2'; // 你可以换成你平台上实际的生图模型名称
+  const IMAGE_MODEL_NAME = 'flux-schnell'; // 如果以后换模型，在这里改名字即可
 
   if (!BOT_TOKEN || !API_KEY || !API_BASE || !MODEL_NAME) {
     console.error('Missing required chat environment variables.');
@@ -24,7 +26,7 @@ export default async function handler(req, res) {
       let userText = update.message.text || update.message.caption || '';
       let imageUrl = null;
 
-      // 2. 处理用户发送的图片消息 (Vision 看图对话)
+      // 1. 处理用户发送的图片消息 (Vision 看图对话)
       if (update.message.photo && update.message.photo.length > 0) {
         const photo = update.message.photo[update.message.photo.length - 1];
         const fileRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${photo.file_id}`);
@@ -44,7 +46,7 @@ export default async function handler(req, res) {
       }
 
       // ==========================================
-      // 3. 处理生图指令：/draw <提示词>
+      // 2. 处理生图指令：/draw <提示词>
       // ==========================================
       if (userText.startsWith('/draw ')) {
         const prompt = userText.replace('/draw ', '').trim();
@@ -78,19 +80,31 @@ export default async function handler(req, res) {
             throw new Error(imageApiData.error?.message || `Image API error: ${imageApiRes.status}`);
           }
 
-          const generatedImageUrl = imageApiData.data?.[0]?.url;
+          // 💡 万能兼容匹配：按常见返回格式依次寻找图片链接
+          let finalImageUrl = 
+            imageApiData.data?.[0]?.url ||       // 标准 OpenAI 格式
+            imageApiData.data?.[0]?.b64_json ||  // Base64 格式
+            imageApiData.url ||                  // 根节点 url
+            imageApiData.output?.[0] ||          // 部分国内聚合平台
+            imageApiData.output;                 // 字符串直出
 
-          if (!generatedImageUrl) {
-            throw new Error('生图模型未返回有效的图片链接。');
+          if (!finalImageUrl) {
+            // 如果实在找不到，抛出带有完整数据的错误，直接在 TG 看到底长啥样
+            throw new Error(`未识别的返回结构: ${JSON.stringify(imageApiData).slice(0, 120)}`);
           }
 
-          // 发送图片给 Telegram
+          // 如果返回的是 Base64 字符串（不带 data:image 前缀），转成 data URL
+          if (finalImageUrl.length > 200 && !finalImageUrl.startsWith('http')) {
+            finalImageUrl = `data:image/png;base64,${finalImageUrl}`;
+          }
+
+          // 发送图片给 Telegram 用户
           await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              photo: generatedImageUrl,
+              photo: finalImageUrl,
               caption: `✨ 提示词: ${prompt}`
             })
           });
@@ -104,7 +118,7 @@ export default async function handler(req, res) {
       }
       // ==========================================
 
-      // 4. 原有：多轮对话上下文记忆管理
+      // 3. 原有：多轮对话上下文记忆管理
       if (!chatHistories.has(chatId)) {
         chatHistories.set(chatId, []);
       }
