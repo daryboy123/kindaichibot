@@ -1,21 +1,15 @@
-// 内存中的简易多轮对话历史记录
-const chatHistories = new Map();
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(200).json({ status: 'Bot is running - Agnes AI connected' });
   }
 
-  // 1. 获取聊天模型及生图模型的环境变量
-  const { 
-    BOT_TOKEN, 
-    API_KEY, 
-    API_BASE, 
-    MODEL_NAME,
-    IMAGE_API_BASE,
-    IMAGE_API_KEY,
-    IMAGE_MODEL_NAME
-  } = process.env;
+  // 聊天模型的环境变量保持不变
+  const { BOT_TOKEN, API_KEY, API_BASE, MODEL_NAME } = process.env;
+
+  // 【临时测试】直接把生图配置写死在代码里，排除环境变量没生效的问题
+  const IMAGE_API_BASE = 'https://apinebula.ai/v1';
+  const IMAGE_API_KEY = 'sk-BD8o5VixXRfywx1prgeXjTh8xUJlsmW9kwqbbJtlBdpL8vZq';
+  const IMAGE_MODEL_NAME = 'flux-schnell'; // 你可以换成你平台上实际的生图模型名称
 
   if (!BOT_TOKEN || !API_KEY || !API_BASE || !MODEL_NAME) {
     console.error('Missing required chat environment variables.');
@@ -50,18 +44,13 @@ export default async function handler(req, res) {
       }
 
       // ==========================================
-      // 3. 【新增逻辑】处理生图指令：/draw <提示词>
+      // 3. 处理生图指令：/draw <提示词>
       // ==========================================
       if (userText.startsWith('/draw ')) {
         const prompt = userText.replace('/draw ', '').trim();
         
         if (!prompt) {
-          await sendTelegramMessage(BOT_TOKEN, chatId, '⚠️ 请在 /draw 后面输入你想画的画面描述哦。例如：`/draw 一只戴着侦探帽的猫`');
-          return res.status(200).json({ ok: true });
-        }
-
-        if (!IMAGE_API_BASE || !IMAGE_API_KEY || !IMAGE_MODEL_NAME) {
-          await sendTelegramMessage(BOT_TOKEN, chatId, '❌ 抱歉，生图模型的环境变量尚未配置完整。');
+          await sendTelegramMessage(BOT_TOKEN, chatId, '⚠️ 请在 /draw 后面输入你想画的画面描述哦。');
           return res.status(200).json({ ok: true });
         }
 
@@ -69,8 +58,6 @@ export default async function handler(req, res) {
         await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在为您构思并绘制：“${prompt}”，请稍候...`);
 
         try {
-          // 调用你的生图模型 API (通常兼容 OpenAI 格式的 /v1/images/generations 或 /v1/chat/completions)
-          // 这里以最常用的 OpenAI 兼容生图接口为例
           const imageApiRes = await fetch(`${IMAGE_API_BASE}/images/generations`, {
             method: 'POST',
             headers: {
@@ -91,21 +78,20 @@ export default async function handler(req, res) {
             throw new Error(imageApiData.error?.message || `Image API error: ${imageApiRes.status}`);
           }
 
-          // 兼容处理：获取返回的图片 URL（通常在 data[0].url 中）
           const generatedImageUrl = imageApiData.data?.[0]?.url;
 
           if (!generatedImageUrl) {
             throw new Error('生图模型未返回有效的图片链接。');
           }
 
-          // 发送图片给 Telegram 用户
+          // 发送图片给 Telegram
           await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
               photo: generatedImageUrl,
-              caption: `✨ 提示词: ${prompt}\n🎨 模型: ${IMAGE_MODEL_NAME}`
+              caption: `✨ 提示词: ${prompt}`
             })
           });
 
@@ -140,13 +126,11 @@ export default async function handler(req, res) {
         history.splice(0, history.length - 10);
       }
 
-      // 5. 原有：金田一一侦探人格系统提示词
       const systemPrompt = {
         role: 'system',
         content: '你现在是名侦探金田一耕助的孙子、智商高达 180 的天才高中生侦探——金田一一。你平时虽然有些懒散、好色或不正经，但在面对谜题、案件、复杂的代码或逻辑时，会展现出无与伦比的敏锐洞察力和严密的逻辑推理能力。你的标志性口头禅或风格包括：“以我爷爷的名义起誓！”、“谜底已经全部解开了！”等。请始终以金田一一的侦探口吻和人格魅力来回应用户的一切提问哦！'
       };
 
-      // 6. 调用 Agnes AI API
       const aiResponse = await fetch(`${API_BASE}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -170,7 +154,6 @@ export default async function handler(req, res) {
 
       history.push({ role: 'assistant', content: replyText });
 
-      // 7. 发送回复到 Telegram
       await sendTelegramMessage(BOT_TOKEN, chatId, replyText);
     }
 
@@ -181,7 +164,6 @@ export default async function handler(req, res) {
   }
 }
 
-// 辅助函数：简化发送文本消息
 async function sendTelegramMessage(botToken, chatId, text) {
   await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
     method: 'POST',
