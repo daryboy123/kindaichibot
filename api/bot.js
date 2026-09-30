@@ -9,7 +9,7 @@ export default async function handler(req, res) {
   // 【临时测试】直接把生图配置写死在代码里，排除环境变量没生效的问题
   const IMAGE_API_BASE = 'https://apinebula.ai/v1';
   const IMAGE_API_KEY = 'sk-BD8o5VixXRfywx1prgeXjTh8xUJlsmW9kwqbbJtlBdpL8vZq';
-  const IMAGE_MODEL_NAME = 'flux-schnell'; // 你可以换成你平台上实际的生图模型名称
+  const IMAGE_MODEL_NAME = 'gpt-image-2'; // 你可以换成你平台上实际的生图模型名称
 
   if (!BOT_TOKEN || !API_KEY || !API_BASE || !MODEL_NAME) {
     console.error('Missing required chat environment variables.');
