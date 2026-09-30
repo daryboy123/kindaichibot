@@ -8,7 +8,8 @@ export default async function handler(req, res) {
 
   const { BOT_TOKEN, API_KEY, API_BASE, MODEL_NAME } = process.env;
 
-  const IMAGE_API_BASE = 'https://apihub.agnes-ai.com/v1/images/generations';
+  // 修正：将图片 API 根路径调整为标准 /v1，避免路径拼接重复
+  const IMAGE_API_BASE = 'https://apihub.agnes-ai.com/v1';
   const IMAGE_API_KEY = 'sk-ozDsndDe9QaPCRibCGCpsx671obGruY9KBCThyWk8KvRPYBs';
   const IMAGE_MODEL_NAME = 'agnes-image-2.5-flash';
 
@@ -84,13 +85,9 @@ export default async function handler(req, res) {
 
           const replyContent = imageApiData.choices?.[0]?.message?.content || '';
           
-          // ==========================================
-          // 适配 Base64 及各类外链返图的解析逻辑
-          // ==========================================
           let finalImageUrl = null;
           let isBase64 = false;
 
-          // 匹配 Base64 格式 (data:image/...;base64,...)
           const base64Match = replyContent.match(/(data:image\/[a-zA-Z0-9+.-]+;base64,[^\s)]+)/i);
           const markdownImgMatch = replyContent.match(/\((https?:\/\/[^\s)]+)\)/);
           const rawUrlMatch = replyContent.match(/(https?:\/\/[^\s]+\.(png|jpg|jpeg|webp|gif|bmp|tiff))/i);
@@ -114,7 +111,6 @@ export default async function handler(req, res) {
           }
 
           if (isBase64) {
-            // 如果是 Base64，我们需要通过 multipart/form-data 或者把 Base64 转成 Buffer 发给 Telegram sendPhoto
             const matches = finalImageUrl.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
             if (!matches) {
               throw new Error('解析 Base64 图片数据失败');
@@ -124,7 +120,6 @@ export default async function handler(req, res) {
 
             await sendTelegramPhotoBuffer(BOT_TOKEN, chatId, buffer, `✨ 图生图提示词: ${prompt}`, `image.${ext === 'jpeg' ? 'jpg' : ext}`);
           } else {
-            // 如果是普通的 URL 链接
             await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -284,7 +279,7 @@ export default async function handler(req, res) {
 
       const replyText = aiData.choices?.[0]?.message?.content || '唔……这个谜题有点棘手，目前还没有得出结论。';
 
-     history.push({ role: 'assistant', content: replyText });
+      history.push({ role: 'assistant', content: replyText });
 
       await sendTelegramMessage(BOT_TOKEN, chatId, replyText);
     }
@@ -307,7 +302,6 @@ async function sendTelegramMessage(botToken, chatId, text) {
   });
 }
 
-// 专门用于发送 Base64 二进制图片的辅助函数
 async function sendTelegramPhotoBuffer(botToken, chatId, buffer, caption, filename) {
   const boundary = '----TelegramFormBoundary' + Math.random().toString(36).substring(2);
   
