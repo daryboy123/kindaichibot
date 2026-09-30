@@ -10,7 +10,7 @@ export default async function handler(req, res) {
 
   const IMAGE_API_BASE = 'https://apinebula.ai/v1';
   const IMAGE_API_KEY = 'sk-BD8o5VixXRfywx1prgeXjTh8xUJlsmW9kwqbbJtlBdpL8vZq';
-  const IMAGE_MODEL_NAME = 'gpt-image-2';
+  const IMAGE_MODEL_NAME = 'gpt-image-2'; // 明确指定生图模型
 
   if (!BOT_TOKEN || !API_KEY || !API_BASE || !MODEL_NAME) {
     console.error('Missing required chat environment variables.');
@@ -45,7 +45,7 @@ export default async function handler(req, res) {
       }
 
       // ==========================================
-      // 2. 处理生图指令：/draw <提示词>
+      // 2. 处理生图指令：/draw <提示词>（改用兼容性极佳的 /chat/completions 通道）
       // ==========================================
       if (userText.startsWith('/draw ')) {
         const prompt = userText.replace('/draw ', '').trim();
@@ -56,10 +56,11 @@ export default async function handler(req, res) {
         }
 
         // 发送“正在创作”的提示
-        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在为您构思并绘制：“${prompt}”, 请稍候...`);
+        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在为您构思并绘制：“${prompt}”，请稍候...`);
 
         try {
-          const imageApiRes = await fetch(`${IMAGE_API_BASE}/images/generations`, {
+          // 通过标准的 chat/completions 接口让 gpt-image-2 生成图片
+          const imageApiRes = await fetch(`${IMAGE_API_BASE}/chat/completions`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -67,54 +68,48 @@ export default async function handler(req, res) {
             },
             body: JSON.stringify({
               model: IMAGE_MODEL_NAME,
-              prompt: prompt,
-              n: 1,
-              size: '1024x1024'
+              messages: [
+                { role: 'user', content: `Generate an image based on this prompt: ${prompt}` }
+              ]
             })
           });
 
           const imageApiData = await imageApiRes.json();
-          
-          // 在云端控制台打印完整的返回数据，方便排查
-          console.log('Image API Raw Response:', JSON.stringify(imageApiData));
+          console.log('Chat-Image API Response:', JSON.stringify(imageApiData));
 
           if (!imageApiRes.ok) {
-            throw new Error(imageApiData.error?.message || `Image API error: ${imageApiRes.status}`);
+            throw new Error(imageApiData.error?.message || `API error: ${imageApiRes.status}`);
           }
 
-          // 全方位兼容各种返回格式 (data[0].url, data[0].b64_json, 或者直接就是 url 字段等)
-          let finalImageUrl = 
-            imageApiData.data?.[0]?.url || 
-            imageApiData.data?.[0]?.b64_json || 
-            imageApiData.url || 
-            imageApiData.image_url;
+          // 从大模型的文本回复中提取图片链接（支持 Markdown 格式 ![desc](url) 或纯链接）
+          const replyContent = imageApiData.choices?.[0]?.message?.content || '';
+          
+          let finalImageUrl = null;
+          const markdownImgMatch = replyContent.match(/\((https?:\/\/[^\s)]+)\)/);
+          const rawUrlMatch = replyContent.match(/(https?:\/\/[^\s]+\.(png|jpg|jpeg|webp))/i);
+
+          if (markdownImgMatch) {
+            finalImageUrl = markdownImgMatch[1];
+          } else if (rawUrlMatch) {
+            finalImageUrl = rawUrlMatch[0];
+          } else if (replyContent.startsWith('http')) {
+            finalImageUrl = replyContent.trim();
+          }
 
           if (!finalImageUrl) {
-            throw new Error(`无法从返回数据中解析出图片。数据结构：${JSON.stringify(imageApiData).slice(0, 200)}`);
-          }
-
-          let photoParam = finalImageUrl;
-          if (finalImageUrl.length > 200 && !finalImageUrl.startsWith('http')) {
-            photoParam = `data:image/png;base64,${finalImageUrl}`;
+            throw new Error(`模型未直接返回图片链接，文字回复内容为: ${replyContent.slice(0, 100)}`);
           }
 
           // 发送图片给 Telegram 用户
-          const tgSendRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+          await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              photo: photoParam,
-              caption: `✨ 提示词: ${prompt}\n🎨 模型: ${IMAGE_MODEL_NAME}`
+              photo: finalImageUrl,
+              caption: `✨ 提示词: ${prompt}`
             })
           });
-
-          const tgSendData = await tgSendRes.json();
-          if (!tgSendData.ok) {
-            console.error('Telegram sendPhoto Error:', tgSendData);
-            // 如果是因为链接无法被 Telegram 直接抓取（比如中转站的临时外链有防盗链），尝试用文本把链接发出来
-            await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 图片已生成，但发送到 TG 失败。直链地址为：\n${finalImageUrl}`);
-          }
 
         } catch (imgError) {
           console.error('Image Generation Error:', imgError);
@@ -159,8 +154,8 @@ export default async function handler(req, res) {
           'Authorization': `Bearer ${API_KEY}`
         },
         body: JSON.stringify({
-              model: MODEL_NAME,
-              messages: [systemPrompt, ...history]
+          model: MODEL_NAME,
+          messages: [systemPrompt, ...history]
         })
       });
 
