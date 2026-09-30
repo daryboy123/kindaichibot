@@ -11,7 +11,7 @@ export default async function handler(req, res) {
   // 生图配置（依然保持写死，确保不会受环境变量影响）
   const IMAGE_API_BASE = 'https://apinebula.ai/v1';
   const IMAGE_API_KEY = 'sk-BD8o5VixXRfywx1prgeXjTh8xUJlsmW9kwqbbJtlBdpL8vZq';
-  const IMAGE_MODEL_NAME = 'flux-schnell'; // 如果以后换模型，在这里改名字即可
+  const IMAGE_MODEL_NAME = 'gpt-image-2'; // 如果以后换模型，在这里改名字即可
 
   if (!BOT_TOKEN || !API_KEY || !API_BASE || !MODEL_NAME) {
     console.error('Missing required chat environment variables.');
