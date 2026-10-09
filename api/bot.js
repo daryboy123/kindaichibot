@@ -60,20 +60,17 @@ export default async function handler(req, res) {
         '21:9':{ '1k': '1568x672',  '2k': '3136x1344', '3k': '4704x2016', '4k': '6272x2688' }
       };
 
-      // 辅助函数：从文本中提取比例、分辨率和净化提示词
       function parseParams(text, prefix) {
         let cleanText = text.replace(prefix, '').trim();
-        let ratio = '1:1';     // 默认比例
-        let tier = '1k';       // 默认档位
+        let ratio = '1:1';
+        let tier = '1k';
 
-        // 1. 匹配比例
         const ratioMatch = cleanText.match(/\b(1:1|3:4|4:3|16:9|9:16|2:3|3:2|21:9)\b/i);
         if (ratioMatch) {
           ratio = ratioMatch[1];
           cleanText = cleanText.replace(ratioMatch[0], '').trim();
         }
 
-        // 2. 匹配分辨率档位 (1k, 2k, 3k, 4k)
         const tierMatch = cleanText.match(/\b(1k|2k|3k|4k)\b/i);
         if (tierMatch) {
           tier = tierMatch[1].toLowerCase();
@@ -90,7 +87,7 @@ export default async function handler(req, res) {
       const hasDrawKeywords = /画一张|帮我画|生成图片|画个|画一幅/i.test(userText);
 
       // ==========================================
-      // 2. 处理图生图功能 (带图且明确要求画图/生成)
+      // 2. 处理图生图功能
       // ==========================================
       if (imageUrl && (isExplicitDrawCommand || hasDrawKeywords)) {
         const prefix = userText.startsWith('/img2img') ? '/img2img' : (userText.startsWith('/draw') ? '/draw' : '');
@@ -178,7 +175,7 @@ export default async function handler(req, res) {
       }
 
       // ==========================================
-      // 3. 处理纯文生图指令：/draw 或带明确生图关键词
+      // 3. 处理纯文生图指令
       // ==========================================
       if (userText.startsWith('/draw ') || hasDrawKeywords) {
         const prefix = userText.startsWith('/draw ') ? '/draw' : '';
@@ -270,7 +267,7 @@ export default async function handler(req, res) {
       }
 
       // ==========================================
-      // 4. 常规多轮文字聊天 / 看图问答 / 内容创作 / 文档摘要 / 代码生成
+      // 4. 常规多轮文字聊天 / 看图问答 (支持图文相似搜索与图片直链展示)
       // ==========================================
       if (!chatHistories.has(chatId)) {
         chatHistories.set(chatId, []);
@@ -280,7 +277,7 @@ export default async function handler(req, res) {
       let userMessageContent;
       if (imageUrl) {
         userMessageContent = [
-          { type: 'text', text: userText || '请帮我看看这张图片里有什么内容。' },
+          { type: 'text', text: userText || '请帮我辨别这张图里的物体是什么，并帮我联网搜索类似物品以及提供相关图片的直链。' },
           { type: 'image_url', image_url: { url: imageUrl } }
         ];
       } else {
@@ -295,7 +292,7 @@ export default async function handler(req, res) {
 
       const systemPrompt = {
         role: 'system',
-        content: '你是一个全能的AI助手，同时也是一位温柔可爱的少女。你的主要功能与能力包括：AI 聊天助手、内容创作、文档摘要、智能问答、代码生成以及看图问答。说话语气亲切、甜美、善解人意，在句尾或适当位置加上可爱的文字表情符号（如 (｡♥‿♥｡)、(>ω<)、(๑>◡<๑)、(•̀ω•́)✧ 等）。回复排版请保持干净、大方、自然，严禁使用多余的星星符号或繁琐的Markdown修饰。具备强大的多引擎联网收集资料和解答能力。'
+        content: '你是一个全能的AI助手，同时也是一位温柔可爱的少女。当你收到用户发送的图片或疑问物体时，请通过强大的多引擎联网搜索功能，识别该物体、寻找相似的物品或图片，并在回复中以干净、大方、自然的排版直接展示这些东西的图片链接或参考来源。语气亲切甜美，在句尾或适当位置加上可爱的文字表情符号（如 (｡♥‿♥｡)、(>ω<)、(๑>◡<๑) 等），严禁使用多余的星星符号。'
       };
 
       const aiResponse = await fetch(`${API_BASE}/chat/completions`, {
@@ -321,7 +318,7 @@ export default async function handler(req, res) {
         throw new Error(aiData.error?.message || `Agnes AI API error: ${aiResponse.status}`);
       }
 
-      const replyText = aiData.choices?.[0]?.message?.content || '唔……主人，我暂时没有找到相关的内容呢，要不换个问题问我吧~ (＞﹏＜)';
+      const replyText = aiData.choices?.[0]?.message?.content || '唔……主人，我暂时没有找到相关的图片或内容呢，要不换个角度拍给我看看吧~ (＞﹏＜)';
 
       history.push({ role: 'assistant', content: replyText });
 
