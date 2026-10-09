@@ -85,11 +85,16 @@ export default async function handler(req, res) {
         return { prompt: cleanText, ratio, tier, size: exactSize };
       }
 
+      // 检查用户是否明确请求生图或生成图片
+      const isExplicitDrawCommand = userText.startsWith('/draw') || userText.startsWith('/img2img');
+      const hasDrawKeywords = /画一张|帮我画|生成图片|画个|画一幅/i.test(userText);
+
       // ==========================================
-      // 2. 处理图生图功能
+      // 2. 处理图生图功能 (带图且明确要求画图/生成)
       // ==========================================
-      if (imageUrl && (userText.startsWith('/img2img') || userText.startsWith('/draw') || userText.length > 0)) {
-        const parsed = parseParams(userText, userText.startsWith('/img2img') ? '/img2img' : '/draw');
+      if (imageUrl && (isExplicitDrawCommand || hasDrawKeywords)) {
+        const prefix = userText.startsWith('/img2img') ? '/img2img' : (userText.startsWith('/draw') ? '/draw' : '');
+        const parsed = parseParams(userText, prefix);
         const prompt = parsed.prompt || 'Based on this image, generate a new artistic variation.';
         
         await sendTelegramMessage(BOT_TOKEN, chatId, `主人，我正在参考这张图片为您进行图生图创作哦 [比例: ${parsed.ratio}, 规格: ${parsed.tier.toUpperCase()}]：“${prompt}”, 请稍等一下下嘛~ (｡♥‿♥｡)`);
@@ -115,7 +120,6 @@ export default async function handler(req, res) {
 
           let imageApiData = await imageApiRes.json();
           
-          // 如果 3K/4K 超过上游限制报错，自动降级到 2K 重试一次，确保成功出图
           if (!imageApiRes.ok && (parsed.tier === '3k' || parsed.tier === '4k')) {
             requestBody.size = RESOLUTION_MAP[parsed.ratio]['2k'];
             const retryRes = await fetch(`${IMAGE_API_BASE}/images/generations`, {
@@ -174,10 +178,11 @@ export default async function handler(req, res) {
       }
 
       // ==========================================
-      // 3. 处理纯文生图指令：/draw <提示词> [比例] [分辨率]
+      // 3. 处理纯文生图指令：/draw 或带明确生图关键词
       // ==========================================
-      if (userText.startsWith('/draw ')) {
-        const parsed = parseParams(userText, '/draw');
+      if (userText.startsWith('/draw ') || hasDrawKeywords) {
+        const prefix = userText.startsWith('/draw ') ? '/draw' : '';
+        const parsed = parseParams(userText, prefix);
         const prompt = parsed.prompt;
         
         if (!prompt) {
@@ -207,7 +212,6 @@ export default async function handler(req, res) {
 
           let imageApiData = await imageApiRes.json();
 
-          // 针对 3K / 4K 超大分辨率的自动降级容错保护
           if (!imageApiRes.ok && (parsed.tier === '3k' || parsed.tier === '4k')) {
             requestBody.size = RESOLUTION_MAP[parsed.ratio]['2k'];
             const retryRes = await fetch(`${IMAGE_API_BASE}/images/generations`, {
@@ -266,7 +270,7 @@ export default async function handler(req, res) {
       }
 
       // ==========================================
-      // 4. 常规多轮文字聊天 / 看图说话 (强化多引擎联网与上下文记忆)
+      // 4. 常规多轮文字聊天 / 看图问答 / 内容创作 / 文档摘要 / 代码生成
       // ==========================================
       if (!chatHistories.has(chatId)) {
         chatHistories.set(chatId, []);
@@ -276,7 +280,7 @@ export default async function handler(req, res) {
       let userMessageContent;
       if (imageUrl) {
         userMessageContent = [
-          { type: 'text', text: userText || '请帮我看看这张现场照片或图片里有什么线索。' },
+          { type: 'text', text: userText || '请帮我看看这张图片里有什么内容。' },
           { type: 'image_url', image_url: { url: imageUrl } }
         ];
       } else {
@@ -285,15 +289,13 @@ export default async function handler(req, res) {
 
       history.push({ role: 'user', content: userMessageContent });
 
-      // 上下文记忆：保持最近 12 条消息
       if (history.length > 12) {
         history.splice(0, history.length - 12);
       }
 
-      // 系统提示词：干净排版、去星星符号、温柔少女风格
       const systemPrompt = {
         role: 'system',
-        content: '你是一个温柔可爱的少女。说话语气亲切、甜美、善解人意，在句尾或适当位置加上可爱的文字表情符号（如 (｡♥‿♥｡)、(>ω<)、(๑>◡<๑)、(•̀ω•́)✧ 等）。回复排版请保持干净、大方、自然，严禁使用多余的星星符号或繁琐的Markdown修饰。具备强大的多引擎联网收集资料和解答能力。'
+        content: '你是一个全能的AI助手，同时也是一位温柔可爱的少女。你的主要功能与能力包括：AI 聊天助手、内容创作、文档摘要、智能问答、代码生成以及看图问答。说话语气亲切、甜美、善解人意，在句尾或适当位置加上可爱的文字表情符号（如 (｡♥‿♥｡)、(>ω<)、(๑>◡<๑)、(•̀ω•́)✧ 等）。回复排版请保持干净、大方、自然，严禁使用多余的星星符号或繁琐的Markdown修饰。具备强大的多引擎联网收集资料和解答能力。'
       };
 
       const aiResponse = await fetch(`${API_BASE}/chat/completions`, {
@@ -305,7 +307,6 @@ export default async function handler(req, res) {
         body: JSON.stringify({
           model: MODEL_NAME,
           messages: [systemPrompt, ...history],
-          // 强化多搜索引擎配置参数
           enable_search: true,
           search: true,
           search_engine: 'all',
