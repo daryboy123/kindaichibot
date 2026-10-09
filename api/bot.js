@@ -93,7 +93,7 @@ export default async function handler(req, res) {
         const parsed = parseParams(userText, userText.startsWith('/img2img') ? '/img2img' : '/draw');
         const prompt = parsed.prompt || 'Based on this image, generate a new artistic variation.';
         
-        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在参考这张图片为您进行图生图创作 [比例: ${parsed.ratio}, 档位: ${parsed.tier.toUpperCase()}, 尺寸: ${parsed.size}]：“${prompt}”, 请稍候...`);
+        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 主人，我正在参考这张图片为您进行图生图创作哦 [比例: ${parsed.ratio}, 档位: ${parsed.tier.toUpperCase()}, 尺寸: ${parsed.size}]：“${prompt}”, 请稍等一下下嘛~ (｡♥‿♥｡)`);
 
         try {
           const requestBody = {
@@ -151,7 +151,7 @@ export default async function handler(req, res) {
 
         } catch (imgError) {
           console.error('Image-to-Image Error:', imgError);
-          await sendTelegramMessage(BOT_TOKEN, chatId, `❌ 唔……图生图时遇到了阻碍：${imgError.message}`);
+          await sendTelegramMessage(BOT_TOKEN, chatId, `❌ 呜呜……图生图的时候遇到了一点小阻碍呢：${imgError.message} (＞﹏＜)`);
         }
 
         return res.status(200).json({ ok: true });
@@ -165,11 +165,11 @@ export default async function handler(req, res) {
         const prompt = parsed.prompt;
         
         if (!prompt) {
-          await sendTelegramMessage(BOT_TOKEN, chatId, '⚠️ 请在 /draw 后面输入你想画的画面描述哦（例如：/draw 赛博朋克 16:9 4k）。');
+          await sendTelegramMessage(BOT_TOKEN, chatId, '⚠️ 主人，请在 /draw 后面输入你想画的画面描述哦（例如：/draw 赛博朋克 16:9 4k）~ (๑>◡<๑)');
           return res.status(200).json({ ok: true });
         }
 
-        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在为您构思并绘制 [比例: ${parsed.ratio}, 档位: ${parsed.tier.toUpperCase()}, 尺寸: ${parsed.size}]：“${prompt}”, 请稍候...`);
+        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 我正在为您构思并绘制 [比例: ${parsed.ratio}, 档位: ${parsed.tier.toUpperCase()}, 尺寸: ${parsed.size}]：“${prompt}”, 请稍候哦~ (｡♥‿♥｡)`);
 
         try {
           const requestBody = {
@@ -226,7 +226,7 @@ export default async function handler(req, res) {
 
         } catch (imgError) {
           console.error('Image Generation Error:', imgError);
-          await sendTelegramMessage(BOT_TOKEN, chatId, `❌ 唔……生成图片时遇到了阻碍：${imgError.message}`);
+          await sendTelegramMessage(BOT_TOKEN, chatId, `❌ 呜呜……生成图片时遇到了一点小问题呢：${imgError.message} (＞﹏＜)`);
         }
 
         return res.status(200).json({ ok: true });
@@ -256,10 +256,10 @@ export default async function handler(req, res) {
         history.splice(0, history.length - 10);
       }
 
-      // 已精简的系统提示词：不废话、不吵闹、冷淡干练
+      // 修改后的系统提示词：温柔可爱的少女，喜欢在句尾加文字表情符号
       const systemPrompt = {
         role: 'system',
-        content: '你是金田一一。性格懒散、寡言、极其怕麻烦。说话简短冷淡，不使用夸张的感叹号或口头禅，直奔核心。在面对谜题或代码时只给出最直接的结论或最精炼的逻辑，绝不多说废话[cite: 1]。'
+        content: '你是一个温柔可爱的少女。说话语气亲切、甜美、善解人意，并且在每句话的结尾或者适当位置喜欢加上可爱的文字表情符号（如 (｡♥‿♥｡)、(>ω<)、(๑>◡<๑)、(•̀ω•́)✧ 等）。具备强大的联网收集资料和解答能力。'
       };
 
       const aiResponse = await fetch(`${API_BASE}/chat/completions`, {
@@ -271,7 +271,7 @@ export default async function handler(req, res) {
         body: JSON.stringify({
           model: MODEL_NAME,
           messages: [systemPrompt, ...history],
-          // 增加联网搜索参数（兼容常见大模型接口的联网搜索开关）
+          // 增加联网搜索参数
           enable_search: true,
           search: true
         })
@@ -284,7 +284,7 @@ export default async function handler(req, res) {
         throw new Error(aiData.error?.message || `Agnes AI API error: ${aiResponse.status}`);
       }
 
-      const replyText = aiData.choices?.[0]?.message?.content || '……没别的事的话，我先睡了。';
+      const replyText = aiData.choices?.[0]?.message?.content || '唔……主人，我暂时没有找到相关的内容呢，要不换个问题问我吧~ (＞﹏＜)';
 
       history.push({ role: 'assistant', content: replyText });
 
