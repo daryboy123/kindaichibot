@@ -66,7 +66,7 @@ export default async function handler(req, res) {
         let ratio = '1:1';     // 默认比例
         let tier = '1k';       // 默认档位
 
-        // 1. 匹配比例 (支持 1:1, 3:4, 4:3, 16:9, 9:16, 2:3, 3:2, 21:9)
+        // 1. 匹配比例
         const ratioMatch = cleanText.match(/\b(1:1|3:4|4:3|16:9|9:16|2:3|3:2|21:9)\b/i);
         if (ratioMatch) {
           ratio = ratioMatch[1];
@@ -80,27 +80,26 @@ export default async function handler(req, res) {
           cleanText = cleanText.replace(tierMatch[0], '').trim();
         }
 
-        // 获取实际像素尺寸
-        const exactSize = RESOLUTION_MAP[ratio]?.[tier] || '1024x1024';
+        let exactSize = RESOLUTION_MAP[ratio]?.[tier] || '1024x1024';
 
         return { prompt: cleanText, ratio, tier, size: exactSize };
       }
 
       // ==========================================
-      // 2. 处理图生图功能 (使用标准 /v1/images/generations)
+      // 2. 处理图生图功能
       // ==========================================
       if (imageUrl && (userText.startsWith('/img2img') || userText.startsWith('/draw') || userText.length > 0)) {
         const parsed = parseParams(userText, userText.startsWith('/img2img') ? '/img2img' : '/draw');
         const prompt = parsed.prompt || 'Based on this image, generate a new artistic variation.';
         
-        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 主人，我正在参考这张图片为您进行图生图创作哦 [比例: ${parsed.ratio}, 档位: ${parsed.tier.toUpperCase()}, 尺寸: ${parsed.size}]：“${prompt}”, 请稍等一下下嘛~ (｡♥‿♥｡)`);
+        await sendTelegramMessage(BOT_TOKEN, chatId, `主人，我正在参考这张图片为您进行图生图创作哦 [比例: ${parsed.ratio}, 规格: ${parsed.tier.toUpperCase()}]：“${prompt}”, 请稍等一下下嘛~ (｡♥‿♥｡)`);
 
         try {
           const requestBody = {
             model: IMAGE_MODEL_NAME,
             prompt: prompt,
             image: imageUrl,
-            size: parsed.size, // 写入具体的宽x高像素
+            size: parsed.size,
             n: 1,
             response_format: 'url'
           };
@@ -114,9 +113,26 @@ export default async function handler(req, res) {
             body: JSON.stringify(requestBody)
           });
 
-          const imageApiData = await imageApiRes.json();
+          let imageApiData = await imageApiRes.json();
           
-          if (!imageApiRes.ok) {
+          // 如果 3K/4K 超过上游限制报错，自动降级到 2K 重试一次，确保成功出图
+          if (!imageApiRes.ok && (parsed.tier === '3k' || parsed.tier === '4k')) {
+            requestBody.size = RESOLUTION_MAP[parsed.ratio]['2k'];
+            const retryRes = await fetch(`${IMAGE_API_BASE}/images/generations`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${IMAGE_API_KEY}`
+              },
+              body: JSON.stringify(requestBody)
+            });
+            imageApiData = await retryRes.json();
+            if (retryRes.ok) {
+              parsed.tier = '2k (降级)';
+            } else {
+              throw new Error(imageApiData.error?.message || `API error: ${retryRes.status}`);
+            }
+          } else if (!imageApiRes.ok) {
             throw new Error(imageApiData.error?.message || `API error: ${imageApiRes.status}`);
           }
 
@@ -126,7 +142,7 @@ export default async function handler(req, res) {
             throw new Error(`生图接口未返回有效图片地址`);
           }
 
-          const captionText = `✨ 图生图提示词: ${prompt}\n📐 比例: ${parsed.ratio} | 规格: ${parsed.tier.toUpperCase()} (${parsed.size})\n\n🔗 原图 PNG 链接: ${finalImageUrl}`;
+          const captionText = `提示词: ${prompt}\n比例: ${parsed.ratio} | 规格: ${parsed.tier.toUpperCase()} (${parsed.size})\n\n原图 PNG 链接: ${finalImageUrl}`;
 
           if (finalImageUrl.startsWith('data:image')) {
             const matches = finalImageUrl.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
@@ -151,7 +167,7 @@ export default async function handler(req, res) {
 
         } catch (imgError) {
           console.error('Image-to-Image Error:', imgError);
-          await sendTelegramMessage(BOT_TOKEN, chatId, `❌ 呜呜……图生图的时候遇到了一点小阻碍呢：${imgError.message} (＞﹏＜)`);
+          await sendTelegramMessage(BOT_TOKEN, chatId, `呜呜……图生图的时候遇到了一点小阻碍呢：${imgError.message} (＞﹏＜)`);
         }
 
         return res.status(200).json({ ok: true });
@@ -165,22 +181,22 @@ export default async function handler(req, res) {
         const prompt = parsed.prompt;
         
         if (!prompt) {
-          await sendTelegramMessage(BOT_TOKEN, chatId, '⚠️ 主人，请在 /draw 后面输入你想画的画面描述哦（例如：/draw 赛博朋克 16:9 4k）~ (๑>◡<๑)');
+          await sendTelegramMessage(BOT_TOKEN, chatId, '主人，请在 /draw 后面输入你想画的画面描述哦（例如：/draw 赛博朋克 16:9 4k）~ (๑>◡<๑)');
           return res.status(200).json({ ok: true });
         }
 
-        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 我正在为您构思并绘制 [比例: ${parsed.ratio}, 档位: ${parsed.tier.toUpperCase()}, 尺寸: ${parsed.size}]：“${prompt}”, 请稍候哦~ (｡♥‿♥｡)`);
+        await sendTelegramMessage(BOT_TOKEN, chatId, `我正在为您构思并绘制 [比例: ${parsed.ratio}, 规格: ${parsed.tier.toUpperCase()}]：“${prompt}”, 请稍候哦~ (｡♥‿♥｡)`);
 
         try {
           const requestBody = {
             model: IMAGE_MODEL_NAME,
             prompt: prompt,
-            size: parsed.size, // 写入具体的宽x高像素
+            size: parsed.size,
             n: 1,
             response_format: 'url'
           };
 
-          const imageApiRes = await fetch(`${IMAGE_API_BASE}/images/generations`, {
+          let imageApiRes = await fetch(`${IMAGE_API_BASE}/images/generations`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -189,9 +205,26 @@ export default async function handler(req, res) {
             body: JSON.stringify(requestBody)
           });
 
-          const imageApiData = await imageApiRes.json();
+          let imageApiData = await imageApiRes.json();
 
-          if (!imageApiRes.ok) {
+          // 针对 3K / 4K 超大分辨率的自动降级容错保护
+          if (!imageApiRes.ok && (parsed.tier === '3k' || parsed.tier === '4k')) {
+            requestBody.size = RESOLUTION_MAP[parsed.ratio]['2k'];
+            const retryRes = await fetch(`${IMAGE_API_BASE}/images/generations`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${IMAGE_API_KEY}`
+              },
+              body: JSON.stringify(requestBody)
+            });
+            imageApiData = await retryRes.json();
+            if (retryRes.ok) {
+              parsed.tier = '2k (降级)';
+            } else {
+              throw new Error(imageApiData.error?.message || `API error: ${retryRes.status}`);
+            }
+          } else if (!imageApiRes.ok) {
             throw new Error(imageApiData.error?.message || `API error: ${imageApiRes.status}`);
           }
 
@@ -201,7 +234,7 @@ export default async function handler(req, res) {
             throw new Error(`生图接口未返回有效图片`);
           }
 
-          const captionText = `✨ 提示词: ${prompt}\n📐 比例: ${parsed.ratio} | 规格: ${parsed.tier.toUpperCase()} (${parsed.size})\n\n🔗 原图 PNG 链接: ${finalImageUrl}`;
+          const captionText = `提示词: ${prompt}\n比例: ${parsed.ratio} | 规格: ${parsed.tier.toUpperCase()} (${parsed.size})\n\n原图 PNG 链接: ${finalImageUrl}`;
 
           if (finalImageUrl.startsWith('data:image')) {
             const matches = finalImageUrl.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
@@ -226,14 +259,14 @@ export default async function handler(req, res) {
 
         } catch (imgError) {
           console.error('Image Generation Error:', imgError);
-          await sendTelegramMessage(BOT_TOKEN, chatId, `❌ 呜呜……生成图片时遇到了一点小问题呢：${imgError.message} (＞﹏＜)`);
+          await sendTelegramMessage(BOT_TOKEN, chatId, `呜呜……生成图片时遇到了一点小问题呢：${imgError.message} (＞﹏＜)`);
         }
 
         return res.status(200).json({ ok: true });
       }
 
       // ==========================================
-      // 4. 常规多轮文字聊天 / 看图说话 (已集成联网搜索)
+      // 4. 常规多轮文字聊天 / 看图说话 (强化多引擎联网与上下文记忆)
       // ==========================================
       if (!chatHistories.has(chatId)) {
         chatHistories.set(chatId, []);
@@ -252,14 +285,15 @@ export default async function handler(req, res) {
 
       history.push({ role: 'user', content: userMessageContent });
 
-      if (history.length > 10) {
-        history.splice(0, history.length - 10);
+      // 上下文记忆：保持最近 12 条消息
+      if (history.length > 12) {
+        history.splice(0, history.length - 12);
       }
 
-      // 修改后的系统提示词：温柔可爱的少女，喜欢在句尾加文字表情符号
+      // 系统提示词：干净排版、去星星符号、温柔少女风格
       const systemPrompt = {
         role: 'system',
-        content: '你是一个温柔可爱的少女。说话语气亲切、甜美、善解人意，并且在每句话的结尾或者适当位置喜欢加上可爱的文字表情符号（如 (｡♥‿♥｡)、(>ω<)、(๑>◡<๑)、(•̀ω•́)✧ 等）。具备强大的联网收集资料和解答能力。'
+        content: '你是一个温柔可爱的少女。说话语气亲切、甜美、善解人意，在句尾或适当位置加上可爱的文字表情符号（如 (｡♥‿♥｡)、(>ω<)、(๑>◡<๑)、(•̀ω•́)✧ 等）。回复排版请保持干净、大方、自然，严禁使用多余的星星符号或繁琐的Markdown修饰。具备强大的多引擎联网收集资料和解答能力。'
       };
 
       const aiResponse = await fetch(`${API_BASE}/chat/completions`, {
@@ -271,9 +305,11 @@ export default async function handler(req, res) {
         body: JSON.stringify({
           model: MODEL_NAME,
           messages: [systemPrompt, ...history],
-          // 增加联网搜索参数
+          // 强化多搜索引擎配置参数
           enable_search: true,
-          search: true
+          search: true,
+          search_engine: 'all',
+          web_search: true
         })
       });
 
