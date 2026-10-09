@@ -82,7 +82,6 @@ export default async function handler(req, res) {
         return { prompt: cleanText, ratio, tier, size: exactSize };
       }
 
-      // 检查用户是否明确请求生图或生成图片
       const isExplicitDrawCommand = userText.startsWith('/draw') || userText.startsWith('/img2img');
       const hasDrawKeywords = /画一张|帮我画|生成图片|画个|画一幅/i.test(userText);
 
@@ -267,7 +266,7 @@ export default async function handler(req, res) {
       }
 
       // ==========================================
-      // 4. 常规多轮文字聊天 / 看图问答 (支持图文相似搜索与图片直链展示)
+      // 4. 常规多轮文字聊天 / 看图问答 (优先使用 Google 搜索并提供可用图片直链)
       // ==========================================
       if (!chatHistories.has(chatId)) {
         chatHistories.set(chatId, []);
@@ -277,7 +276,7 @@ export default async function handler(req, res) {
       let userMessageContent;
       if (imageUrl) {
         userMessageContent = [
-          { type: 'text', text: userText || '请帮我辨别这张图里的物体是什么，并帮我联网搜索类似物品以及提供相关图片的直链。' },
+          { type: 'text', text: userText || '请帮我辨别这张图里的物体是什么。由于部分图床或维基图片打不开，请优先通过 Google 帮我搜索类似物品，并提供可以正常打开的图片直链或网页来源。' },
           { type: 'image_url', image_url: { url: imageUrl } }
         ];
       } else {
@@ -292,7 +291,7 @@ export default async function handler(req, res) {
 
       const systemPrompt = {
         role: 'system',
-        content: '你是一个全能的AI助手，同时也是一位温柔可爱的少女。当你收到用户发送的图片或疑问物体时，请通过强大的多引擎联网搜索功能，识别该物体、寻找相似的物品或图片，并在回复中以干净、大方、自然的排版直接展示这些东西的图片链接或参考来源。语气亲切甜美，在句尾或适当位置加上可爱的文字表情符号（如 (｡♥‿♥｡)、(>ω<)、(๑>◡<๑) 等），严禁使用多余的星星符号。'
+        content: '你是一个全能的AI助手，同时也是一位温柔可爱的少女。联网搜索引擎必须严格遵循优先级：首选 Google，其次依次为 Bing、DuckDuckGo、Baidu、Yahoo、Sougou 等。当用户发来图片或打不开的死链时，请通过 Google 等引擎主动帮用户搜索类似内容，并务必提供可正常访问、无防盗链限制的有效图片直链或网页地址。语气亲切甜美，在句尾或适当位置加上可爱的文字表情符号（如 (｡♥‿♥｡)、(>ω<)、(๑>◡<๑) 等），排版干净自然，严禁使用多余的星星符号。'
       };
 
       const aiResponse = await fetch(`${API_BASE}/chat/completions`, {
@@ -306,7 +305,8 @@ export default async function handler(req, res) {
           messages: [systemPrompt, ...history],
           enable_search: true,
           search: true,
-          search_engine: 'all',
+          search_engine: 'google', // 强制首选 Google
+          fallback_search_engines: ['bing', 'duckduckgo', 'baidu', 'yahoo', 'sougou'],
           web_search: true
         })
       });
@@ -318,7 +318,7 @@ export default async function handler(req, res) {
         throw new Error(aiData.error?.message || `Agnes AI API error: ${aiResponse.status}`);
       }
 
-      const replyText = aiData.choices?.[0]?.message?.content || '唔……主人，我暂时没有找到相关的图片或内容呢，要不换个角度拍给我看看吧~ (＞﹏＜)';
+      const replyText = aiData.choices?.[0]?.message?.content || '唔……主人，我暂时没有通过 Google 搜索到对应的有效图片呢，要不换个关键词或换张图发给我吧~ (＞﹏＜)';
 
       history.push({ role: 'assistant', content: replyText });
 
