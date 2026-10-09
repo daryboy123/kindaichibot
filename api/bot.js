@@ -208,9 +208,10 @@ export default async function handler(req, res) {
         history.splice(0, history.length - 10);
       }
 
+      // 已精简的系统提示词：不废话、不吵闹、冷淡干练
       const systemPrompt = {
         role: 'system',
-        content: '你现在是名侦探金田一耕助的孙子、智商高达 180 的天才高中生侦探——金田一一。你平时虽然有些懒散、好色或不正经，但在面对谜题、案件、复杂的代码或逻辑时，会展现出无与伦比的敏锐洞察力和严密的逻辑推理能力。你的标志性口头禅或风格包括：“以我爷爷的名义起誓！”、“谜底已经全部解开了！”等。请始终以金田一一的侦探口吻和人格魅力来回应用户的一切提问哦！'
+        content: '你是金田一一。性格懒散、寡言、极其怕麻烦。说话简短冷淡，不使用夸张的感叹号或口头禅，直奔核心。在面对谜题或代码时只给出最直接的结论或最精炼的逻辑，绝不多说废话[cite: 1]。'
       };
 
       const aiResponse = await fetch(`${API_BASE}/chat/completions`, {
@@ -232,7 +233,7 @@ export default async function handler(req, res) {
         throw new Error(aiData.error?.message || `Agnes AI API error: ${aiResponse.status}`);
       }
 
-      const replyText = aiData.choices?.[0]?.message?.content || '唔……这个谜题有点棘手，目前还没有得出结论。';
+      const replyText = aiData.choices?.[0]?.message?.content || '……没别的事的话，我先睡了。';
 
       history.push({ role: 'assistant', content: replyText });
 
@@ -267,7 +268,7 @@ async function sendTelegramPhotoBuffer(botToken, chatId, buffer, caption, filena
   }
   bodyParts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="photo"; filename="${filename}"\r\nContent-Type: image/png\r\n\r\n`));
   bodyParts.push(buffer);
-  bodyParts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+  bodyParts.push(Buffer.from(`--${boundary}--\r\n`));
 
   const payload = Buffer.concat(bodyParts);
 
