@@ -233,7 +233,7 @@ export default async function handler(req, res) {
       }
 
       // ==========================================
-      // 4. 常规多轮文字聊天 / 看图说话
+      // 4. 常规多轮文字聊天 / 看图说话 (已集成联网搜索)
       // ==========================================
       if (!chatHistories.has(chatId)) {
         chatHistories.set(chatId, []);
@@ -270,7 +270,10 @@ export default async function handler(req, res) {
         },
         body: JSON.stringify({
           model: MODEL_NAME,
-          messages: [systemPrompt, ...history]
+          messages: [systemPrompt, ...history],
+          // 增加联网搜索参数（兼容常见大模型接口的联网搜索开关）
+          enable_search: true,
+          search: true
         })
       });
 
