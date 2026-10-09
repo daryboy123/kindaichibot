@@ -57,7 +57,6 @@ export default async function handler(req, res) {
         await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在参考这张图片为您进行图生图创作：“${prompt}”, 请稍候...`);
 
         try {
-          // 严格按照报错提示使用 /v1/images/generations
           const imageApiRes = await fetch(`${IMAGE_API_BASE}/images/generations`, {
             method: 'POST',
             headers: {
@@ -67,7 +66,7 @@ export default async function handler(req, res) {
             body: JSON.stringify({
               model: IMAGE_MODEL_NAME,
               prompt: prompt,
-              image: imageUrl, // 传入参考图像
+              image: imageUrl,
               n: 1,
               response_format: 'url'
             })
@@ -79,12 +78,14 @@ export default async function handler(req, res) {
             throw new Error(imageApiData.error?.message || `API error: ${imageApiRes.status}`);
           }
 
-          // 兼容标准 OpenAI 格式的返回（data[0].url 或 data[0].b64_json）
           const finalImageUrl = imageApiData.data?.[0]?.url || imageApiData.data?.[0]?.b64_json || imageApiData.url;
 
           if (!finalImageUrl) {
             throw new Error(`生图接口未返回有效图片地址`);
           }
+
+          // 拼接带原图 PNG 链接的文案
+          const captionText = `✨ 图生图提示词: ${prompt}\n\n🔗 原图 PNG 链接: ${finalImageUrl}`;
 
           if (finalImageUrl.startsWith('data:image')) {
             const matches = finalImageUrl.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
@@ -94,7 +95,7 @@ export default async function handler(req, res) {
             const ext = matches[1];
             const buffer = Buffer.from(matches[2], 'base64');
 
-            await sendTelegramPhotoBuffer(BOT_TOKEN, chatId, buffer, `✨ 图生图提示词: ${prompt}`, `image.${ext === 'jpeg' ? 'jpg' : ext}`);
+            await sendTelegramPhotoBuffer(BOT_TOKEN, chatId, buffer, captionText, `image.${ext === 'jpeg' ? 'jpg' : ext}`);
           } else {
             await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
               method: 'POST',
@@ -102,7 +103,7 @@ export default async function handler(req, res) {
               body: JSON.stringify({
                 chat_id: chatId,
                 photo: finalImageUrl,
-                caption: `✨ 图生图提示词: ${prompt}`
+                caption: captionText
               })
             });
           }
@@ -155,6 +156,9 @@ export default async function handler(req, res) {
             throw new Error(`生图接口未返回有效图片`);
           }
 
+          // 拼接带原图 PNG 链接的文案
+          const captionText = `✨ 提示词: ${prompt}\n\n🔗 原图 PNG 链接: ${finalImageUrl}`;
+
           if (finalImageUrl.startsWith('data:image')) {
             const matches = finalImageUrl.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
             if (!matches) {
@@ -163,7 +167,7 @@ export default async function handler(req, res) {
             const ext = matches[1];
             const buffer = Buffer.from(matches[2], 'base64');
 
-            await sendTelegramPhotoBuffer(BOT_TOKEN, chatId, buffer, `✨ 提示词: ${prompt}`, `image.${ext === 'jpeg' ? 'jpg' : ext}`);
+            await sendTelegramPhotoBuffer(BOT_TOKEN, chatId, buffer, captionText, `image.${ext === 'jpeg' ? 'jpg' : ext}`);
           } else {
             await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
               method: 'POST',
@@ -171,7 +175,7 @@ export default async function handler(req, res) {
               body: JSON.stringify({
                 chat_id: chatId,
                 photo: finalImageUrl,
-                caption: `✨ 提示词: ${prompt}`
+                caption: captionText
               })
             });
           }
