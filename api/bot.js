@@ -48,28 +48,49 @@ export default async function handler(req, res) {
         }
       }
 
+      // 辅助函数：从文本中提取并移除尺寸后缀（支持 1k, 2k, 3k, 4k，不区分大小写）
+      function parseSizeAndPrompt(text, prefix) {
+        let cleanText = text.replace(prefix, '').trim();
+        let size = undefined;
+        
+        // 匹配结尾或带空格的 1k, 2k, 3k, 4k
+        const sizeMatch = cleanText.match(/\b(1k|2k|3k|4k)\b/i);
+        if (sizeMatch) {
+          size = sizeMatch[1].toLowerCase();
+          cleanText = cleanText.replace(sizeMatch[0], '').trim();
+        }
+        return { prompt: cleanText, size };
+      }
+
       // ==========================================
       // 2. 处理图生图功能 (使用标准 /v1/images/generations)
       // ==========================================
       if (imageUrl && (userText.startsWith('/img2img') || userText.startsWith('/draw') || userText.length > 0)) {
-        const prompt = userText.replace('/img2img', '').replace('/draw', '').trim() || 'Based on this image, generate a new artistic variation.';
+        const parsed = parseSizeAndPrompt(userText, userText.startsWith('/img2img') ? '/img2img' : '/draw');
+        const prompt = parsed.prompt || 'Based on this image, generate a new artistic variation.';
+        const requestedSize = parsed.size; // 1k, 2k, 3k, 4k 或 undefined
         
-        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在参考这张图片为您进行图生图创作：“${prompt}”, 请稍候...`);
+        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在参考这张图片为您进行图生图创作${requestedSize ? ` [${requestedSize.toUpperCase()}]` :''}：“${prompt}”, 请稍候...`);
 
         try {
+          const requestBody = {
+            model: IMAGE_MODEL_NAME,
+            prompt: prompt,
+            image: imageUrl,
+            n: 1,
+            response_format: 'url'
+          };
+          if (requestedSize) {
+            requestBody.size = requestedSize;
+          }
+
           const imageApiRes = await fetch(`${IMAGE_API_BASE}/images/generations`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${IMAGE_API_KEY}`
             },
-            body: JSON.stringify({
-              model: IMAGE_MODEL_NAME,
-              prompt: prompt,
-              image: imageUrl,
-              n: 1,
-              response_format: 'url'
-            })
+            body: JSON.stringify(requestBody)
           });
 
           const imageApiData = await imageApiRes.json();
@@ -85,7 +106,7 @@ export default async function handler(req, res) {
           }
 
           // 拼接带原图 PNG 链接的文案
-          const captionText = `✨ 图生图提示词: ${prompt}\n\n🔗 原图 PNG 链接: ${finalImageUrl}`;
+          const captionText = `✨ 图生图提示词: ${prompt}${requestedSize ? ` (${requestedSize.toUpperCase()})` : ''}\n\n🔗 原图 PNG 链接: ${finalImageUrl}`;
 
           if (finalImageUrl.startsWith('data:image')) {
             const matches = finalImageUrl.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
@@ -117,31 +138,38 @@ export default async function handler(req, res) {
       }
 
       // ==========================================
-      // 3. 处理纯文生图指令：/draw <提示词> (使用标准 /v1/images/generations)
+      // 3. 处理纯文生图指令：/draw <提示词> [1k/2k/3k/4k]
       // ==========================================
       if (userText.startsWith('/draw ')) {
-        const prompt = userText.replace('/draw ', '').trim();
+        const parsed = parseSizeAndPrompt(userText, '/draw');
+        const prompt = parsed.prompt;
+        const requestedSize = parsed.size; // 1k, 2k, 3k, 4k 或 undefined
         
         if (!prompt) {
-          await sendTelegramMessage(BOT_TOKEN, chatId, '⚠️ 请在 /draw 后面输入你想画的画面描述哦。');
+          await sendTelegramMessage(BOT_TOKEN, chatId, '⚠️ 请在 /draw 后面输入你想画的画面描述哦（例如：/draw 一只猫 2k）。');
           return res.status(200).json({ ok: true });
         }
 
-        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在为您构思并绘制：“${prompt}”, 请稍候...`);
+        await sendTelegramMessage(BOT_TOKEN, chatId, `🎨 金田一正在为您构思并绘制${requestedSize ? ` [${requestedSize.toUpperCase()}]` :''}：“${prompt}”, 请稍候...`);
 
         try {
+          const requestBody = {
+            model: IMAGE_MODEL_NAME,
+            prompt: prompt,
+            n: 1,
+            response_format: 'url'
+          };
+          if (requestedSize) {
+            requestBody.size = requestedSize;
+          }
+
           const imageApiRes = await fetch(`${IMAGE_API_BASE}/images/generations`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${IMAGE_API_KEY}`
             },
-            body: JSON.stringify({
-              model: IMAGE_MODEL_NAME,
-              prompt: prompt,
-              n: 1,
-              response_format: 'url'
-            })
+            body: JSON.stringify(requestBody)
           });
 
           const imageApiData = await imageApiRes.json();
@@ -157,7 +185,7 @@ export default async function handler(req, res) {
           }
 
           // 拼接带原图 PNG 链接的文案
-          const captionText = `✨ 提示词: ${prompt}\n\n🔗 原图 PNG 链接: ${finalImageUrl}`;
+          const captionText = `✨ 提示词: ${prompt}${requestedSize ? ` (${requestedSize.toUpperCase()})` : ''}\n\n🔗 原图 PNG 链接: ${finalImageUrl}`;
 
           if (finalImageUrl.startsWith('data:image')) {
             const matches = finalImageUrl.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
@@ -270,7 +298,7 @@ async function sendTelegramPhotoBuffer(botToken, chatId, buffer, caption, filena
   if (caption) {
     bodyParts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n${caption}\r\n`));
   }
-  bodyParts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="photo"; filename="${filename}"\r\nContent-Type: image/png\r\n\r\n`));
+  bodyParts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="photo"; filename="${filename}"\r\nContent-Type: image/png\r\n`));
   bodyParts.push(buffer);
   bodyParts.push(Buffer.from(`--${boundary}--\r\n`));
 
